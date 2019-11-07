@@ -20,6 +20,6 @@
     "ejs": "^2.3.4",
     "express": "^4.13.3",
     "method-override": "^2.3.5",
-    "mongoose": "^4.2.5"
+    "mongoose": "^5.7.8"
   }
 }
