@@ -7,6 +7,7 @@ var bodyParser = require('body-parser');
 var methodOverride = require('method-override');
 
 // connect database
+mongoose.set('strictQuery', false);
 mongoose.connect(process.env.MONGO_DB);
 var db = mongoose.connection;
 db.once("open",function () {
