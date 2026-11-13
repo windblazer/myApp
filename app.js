@@ -9,7 +9,9 @@ var methodOverride = require('method-override');
 // connect database
 mongoose.set('strictQuery', false);
 mongoose.set('sanitizeFilter', true); // strip $-operators from query filters
-mongoose.connect(process.env.MONGO_DB);
+// connect() returns a promise in mongoose 7+. Swallow the rejection so it
+// does not crash the process; the "error" handler below logs it.
+mongoose.connect(process.env.MONGO_DB).catch(function () {});
 var db = mongoose.connection;
 db.once("open",function () {
   console.log("DB connected!");
@@ -19,7 +21,7 @@ db.on("error",function (err) {
 });
 
 // model setting
-var postSchema = mongoose.Schema({
+var postSchema = new mongoose.Schema({
   title: {type:String, required:true},
   body: {type:String, required:true},
   createdAt: {type:Date, default:Date.now},
@@ -54,50 +56,48 @@ app.param('id', function (req, res, next, id) {
 });
 
 // set routes
-app.get('/posts', function(req,res){
-  Post.find({}).sort('-createdAt').exec(function (err,posts) {
-    if(err) return res.json({success:false, message:err});
-    res.render("posts/index", {data:posts});
-  });
-}); // index
+// Express 4 does not catch rejected promises, so every async handler goes
+// through route(), which sends DB errors back the same way as before.
+function route(handler) {
+  return function (req, res, next) {
+    handler(req, res, next).catch(function (err) {
+      res.json({success:false, message:err});
+    });
+  };
+}
+
+app.get('/posts', route(async function(req,res){
+  var posts = await Post.find({}).sort('-createdAt');
+  res.render("posts/index", {data:posts});
+})); // index
 app.get('/posts/new', function(req,res){
   res.render("posts/new");
 }); // new
-app.post('/posts', function(req,res){
+app.post('/posts', route(async function(req,res){
   var input = pickPostInput(req.body);
   if (input.error) return res.status(400).json({ success: false, message: input.error });
-  Post.create(input.value, function (err,post) {
-    if(err) return res.json({success:false, message:err});
-    res.redirect('/posts');
-  });
-}); // create
-app.get('/posts/:id', function(req,res){
-  Post.findById(req.params.id, function (err,post) {
-    if(err) return res.json({success:false, message:err});
-    res.render("posts/show", {data:post});
-  });
-}); // show
-app.get('/posts/:id/edit', function(req,res){
-  Post.findById(req.params.id, function (err,post) {
-    if(err) return res.json({success:false, message:err});
-    res.render("posts/edit", {data:post});
-  });
-}); // edit
-app.put('/posts/:id', function(req,res){
+  await Post.create(input.value);
+  res.redirect('/posts');
+})); // create
+app.get('/posts/:id', route(async function(req,res){
+  var post = await Post.findById(req.params.id);
+  res.render("posts/show", {data:post});
+})); // show
+app.get('/posts/:id/edit', route(async function(req,res){
+  var post = await Post.findById(req.params.id);
+  res.render("posts/edit", {data:post});
+})); // edit
+app.put('/posts/:id', route(async function(req,res){
   var input = pickPostInput(req.body);
   if (input.error) return res.status(400).json({ success: false, message: input.error });
   input.value.updatedAt = Date.now();
-  Post.findByIdAndUpdate(req.params.id, input.value, { runValidators: true }, function (err,post) {
-    if(err) return res.json({success:false, message:err});
-    res.redirect('/posts/'+req.params.id);
-  });
-}); //update
-app.delete('/posts/:id', function(req,res){
-  Post.findByIdAndRemove(req.params.id, function (err,post) {
-    if(err) return res.json({success:false, message:err});
-    res.redirect('/posts');
-  });
-}); //destroy
+  await Post.findByIdAndUpdate(req.params.id, input.value, { runValidators: true });
+  res.redirect('/posts/'+req.params.id);
+})); //update
+app.delete('/posts/:id', route(async function(req,res){
+  await Post.findByIdAndDelete(req.params.id);
+  res.redirect('/posts');
+})); //destroy
 
 // start server
 app.listen(3000, function(){
