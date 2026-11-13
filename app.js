@@ -8,6 +8,7 @@ var methodOverride = require('method-override');
 
 // connect database
 mongoose.set('strictQuery', false);
+mongoose.set('sanitizeFilter', true); // strip $-operators from query filters
 mongoose.connect(process.env.MONGO_DB);
 var db = mongoose.connection;
 db.once("open",function () {
@@ -35,6 +36,23 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended:true}));
 app.use(methodOverride("_method"));
 
+// input validation
+// Only title and body are accepted, and both must be non-empty strings.
+// Any other keys (e.g. createdAt, _id, $-operators, toString) are dropped.
+function pickPostInput(body) {
+  var input = body && body.post;
+  if (!input || typeof input !== 'object') return { error: 'post is required' };
+  var title = input.title, text = input.body;
+  if (typeof title !== 'string' || !title.trim()) return { error: 'title must be a non-empty string' };
+  if (typeof text !== 'string' || !text.trim()) return { error: 'body must be a non-empty string' };
+  return { value: { title: title, body: text } };
+}
+
+app.param('id', function (req, res, next, id) {
+  if (mongoose.isValidObjectId(id)) return next();
+  res.status(400).json({ success: false, message: 'invalid post id' });
+});
+
 // set routes
 app.get('/posts', function(req,res){
   Post.find({}).sort('-createdAt').exec(function (err,posts) {
@@ -46,8 +64,9 @@ app.get('/posts/new', function(req,res){
   res.render("posts/new");
 }); // new
 app.post('/posts', function(req,res){
-  console.log(req.body);
-  Post.create(req.body.post,function (err,post) {
+  var input = pickPostInput(req.body);
+  if (input.error) return res.status(400).json({ success: false, message: input.error });
+  Post.create(input.value, function (err,post) {
     if(err) return res.json({success:false, message:err});
     res.redirect('/posts');
   });
@@ -65,8 +84,10 @@ app.get('/posts/:id/edit', function(req,res){
   });
 }); // edit
 app.put('/posts/:id', function(req,res){
-  req.body.post.updatedAt=Date.now();
-  Post.findByIdAndUpdate(req.params.id, req.body.post, function (err,post) {
+  var input = pickPostInput(req.body);
+  if (input.error) return res.status(400).json({ success: false, message: input.error });
+  input.value.updatedAt = Date.now();
+  Post.findByIdAndUpdate(req.params.id, input.value, { runValidators: true }, function (err,post) {
     if(err) return res.json({success:false, message:err});
     res.redirect('/posts/'+req.params.id);
   });
